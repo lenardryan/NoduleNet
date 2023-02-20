@@ -19,8 +19,9 @@ import traceback
 from torch.utils.tensorboard import SummaryWriter
 
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3' if torch.cuda.is_available() else ""
 this_module = sys.modules[__name__]
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 parser = argparse.ArgumentParser(description='PyTorch Detector')
@@ -113,11 +114,13 @@ def main():
     
     # Initilize network
     net = getattr(this_module, net)(net_config)
-    net = net.cuda()
+    net = net.to(device)
     
     optimizer = getattr(torch.optim, optimizer)
-    # optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay)
-    optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay, momentum=momentum)
+    if (args.optimizer == 'Adam'):
+      optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay)
+    else:
+      optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay, momentum=momentum)
 
     start_epoch = 0
 
@@ -129,7 +132,7 @@ def main():
         state.update(checkpoint['state_dict'])
 
         try:
-            net.load_state_dict(state)
+            net.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
         except:
             print('Load something failed!')
@@ -158,7 +161,7 @@ def main():
     writer = SummaryWriter(tb_out_dir)
     train_writer = SummaryWriter(os.path.join(tb_out_dir, 'train'))
     val_writer = SummaryWriter(os.path.join(tb_out_dir, 'val'))
-    # writer.add_graph(net, (torch.zeros((16, 1, 128, 128, 128)).cuda(), [[]], [[]], [[]], [torch.zeros((16, 128, 128, 128))]), verbose=False)
+    # writer.add_graph(net, (torch.zeros((16, 1, 128, 128, 128)).to(device), [[]], [[]], [[]], [torch.zeros((16, 128, 128, 128))]), verbose=False)
 
     for i in tqdm(range(start_epoch, epochs + 1), desc='Total'):
         # learning rate schedule
@@ -212,7 +215,7 @@ def train(net, train_loader, optimizer, epoch, writer):
     mask_stats = []
 
     for j, (input, truth_box, truth_label, truth_mask, masks) in tqdm(enumerate(train_loader), total=len(train_loader), desc='Train %d' % epoch):
-        input = Variable(input).cuda()
+        input = Variable(input).to(device)
         truth_box = np.array(truth_box)
         truth_label = np.array(truth_label)
         truth_mask = np.array(truth_mask)
@@ -246,7 +249,7 @@ def train(net, train_loader, optimizer, epoch, writer):
 
         torch.cuda.empty_cache()
 
-    rpn_stats = np.asarray(rpn_stats, np.float32)
+    rpn_stats = np.asarray(torch.tensor(rpn_stats, device = 'cpu'), np.float32)
     
     print('Train Epoch %d, iter %d, total time %f, loss %f' % (epoch, j, time.time() - s, np.average(total_loss)))
     print('rpn_cls %f, rpn_reg %f, rcnn_cls %f, rcnn_reg %f, mask_loss %f' % \
@@ -325,7 +328,7 @@ def validate(net, val_loader, epoch, writer):
     s = time.time()
     for j, (input, truth_box, truth_label, truth_mask, masks) in tqdm(enumerate(val_loader), total=len(val_loader), desc='Val %d' % epoch):
         with torch.no_grad():
-            input = Variable(input).cuda()
+            input = Variable(input).to(device)
             truth_box = np.array(truth_box)
             truth_label = np.array(truth_label)
 
@@ -342,7 +345,7 @@ def validate(net, val_loader, epoch, writer):
         rcnn_stats.append(rcnn_stat)
         mask_stats.append(mask_stat)
 
-    rpn_stats = np.asarray(rpn_stats, np.float32)
+    rpn_stats = np.asarray(torch.tensor(rpn_stats, device = 'cpu'), np.float32)
     print('Val Epoch %d, iter %d, total time %f, loss %f' % (epoch, j, time.time()-s, np.average(total_loss)))
     print('rpn_cls %f, rpn_reg %f, rcnn_cls %f, rcnn_reg %f, mask_loss %f' % \
         (np.average(rpn_cls_loss), np.average(rpn_reg_loss),

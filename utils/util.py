@@ -330,7 +330,33 @@ def crop_boxes2mask(crop_boxes, masks, img_reso, num_class=28):
 
         m = masks[i]
         D_c, H_c, W_c = m.shape
-        mask[cat - 1][z_start:z_end, y_start:y_end, x_start:x_end] = (m > 0.5).astype(np.uint8)
+        # mask[cat - 1][z_start:z_end, y_start:y_end, x_start:x_end] = (m > 0.5).astype(np.uint8)
+        mask[cat - 1][z_start:z_end, y_start:y_end, x_start:x_end] = m.astype(np.uint8)
+    
+    return mask
+
+def crop_boxes2cam(crop_boxes, masks, img_reso, num_class=28):
+    """
+    Apply results of mask-rcnn (detections and masks) to mask result.
+
+    crop_boxes: detected bounding boxes [z, y, x, d, h, w, category]
+    masks: mask predictions correponding to each one of the detections config['mask_crop_size']
+    img_reso: tuple with 3 elements, shape of the image or target resolution of the mask
+    """
+    D, H, W = img_reso
+    mask = np.zeros((num_class, D, H, W))
+    for i in range(len(crop_boxes)):
+        z_start, y_start, x_start, z_end, y_end, x_end, cat = crop_boxes[i]
+
+        cat = int(cat)
+        print(cat)
+
+        m = masks[i]
+        # m.reshape((z_end-z_start, y_end-y_start, x_end-x_start))
+        D_c, H_c, W_c = m.shape
+        print(m.shape)
+        # mask[cat - 1][z_start:z_end, y_start:y_end, x_start:x_end] = (m > 0.5).astype(np.uint8)
+        mask[cat - 1][z_start:z_end, y_start:y_end, x_start:x_end] = m.astype(np.uint8)
     
     return mask
 

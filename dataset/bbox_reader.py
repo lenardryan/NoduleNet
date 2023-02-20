@@ -295,6 +295,21 @@ class Crop(object):
             for i in range(len(bboxes)):
                 for j in range(4):
                     bboxes[i][j] = bboxes[i][j]*scale
+        # if isScale:
+        #     with warnings.catch_warnings():
+        #         warnings.simplefilter("ignore")
+        #         crop = zoom(crop,[1,scale,scale,scale],order=1)
+        #     newpad = np.array(self.crop_size)-np.array(crop.shape[1:])
+        #     if newpad[0] < 0 or newpad[1] < 0 or newpad[2] < 0:
+        #         crop = crop[:,:-newpad[0],:-newpad[1],:-newpad[2]]
+        #     elif newpad[0] > 0 or newpad[1] > 0 or newpad[2] > 0:
+        #         pad2 = [[0,0],[0,newpad[0]],[0,newpad[1]],[0,newpad[2]]]
+        #         crop = np.pad(crop, pad2,'constant', constant_values = self.pad_value)
+        #     for i in range(4):
+        #         target[i] = target[i]*scale
+        #     for i in range(len(bboxes)):
+        #         for j in range(4):
+        #             bboxes[i][j] = bboxes[i][j]*scale
         return crop, target, bboxes, coord
 
 

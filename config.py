@@ -12,10 +12,10 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)
 
 # Preprocessing using preserved HU in dilated part of mask
-BASE = '/scratch1/joseph.portugal/Luna16/dataset/' # make sure you have the ending '/'
+BASE = '/content/drive/MyDrive/Thesis/Luna16/dataset/' # make sure you have the ending '/'
 data_config = {
     # put combined LUNA16 .mhd files into one folder
-    'data_dir': BASE + 'volumes/images/combined',
+    'data_dir': BASE + 'volumes/images/all',
 
     # directory for putting all preprocessed results for training to this path
     'preprocessed_data_dir': BASE + 'preprocessed_test/3',
@@ -113,10 +113,10 @@ def lr_shedule(epoch, init_lr=0.01, total=200):
 
 train_config = {
     'net': 'NoduleNet',
-    'batch_size': 16,
+    'batch_size': 8,
 
     'lr_schedule': lr_shedule,
-    'optimizer': 'SGD',
+    'optimizer': 'Adam',
     'momentum': 0.9,
     'weight_decay': 1e-4,
 
@@ -144,7 +144,7 @@ elif train_config['optimizer'] == 'RMSprop':
 
 train_config['RESULTS_DIR'] = os.path.join(train_config['ROOT_DIR'], 'results')
 train_config['out_dir'] = os.path.join(train_config['RESULTS_DIR'], 'cross_val_test')
-train_config['initial_checkpoint'] = None #train_config['out_dir'] + '/model/027.ckpt'
+train_config['initial_checkpoint'] = train_config['out_dir'] + '/model/167.ckpt'
 
 
 config = dict(data_config, **net_config)

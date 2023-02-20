@@ -146,6 +146,7 @@ class RpnHead(nn.Module):
 
         logits = self.logits(out)
         deltas = self.deltas(out)
+
         size = logits.size()
         logits = logits.view(logits.size(0), logits.size(1), -1)
         logits = logits.transpose(1, 2).contiguous().view(size[0], size[2], size[3], size[4], len(config['anchors']), 1)
@@ -233,9 +234,9 @@ class MaskHead(nn.Module):
         for detection in detections:
             b, z_start, y_start, x_start, z_end, y_end, x_end, cat = detection
 
-            up1 = f_4[b, :, z_start / 4:z_end / 4, y_start / 4:y_end / 4, x_start / 4:x_end / 4].unsqueeze(0)
+            up1 = f_4[int(b), :, int(z_start / 4):int(z_end / 4), int(y_start / 4):int(y_end / 4), int(x_start / 4):int(x_end / 4)].unsqueeze(0)
             up2 = self.up2(up1)
-            up2 = self.back2(torch.cat((up2, f_2[b, :, z_start / 2:z_end / 2, y_start / 2:y_end / 2, x_start / 2:x_end / 2].unsqueeze(0)), 1))
+            up2 = self.back2(torch.cat((up2, f_2[int(b), :, int(z_start / 2):int(z_end / 2), int(y_start / 2):int(y_end / 2), int(x_start / 2):int(x_end / 2)].unsqueeze(0)), 1))
             up3 = self.up3(up2)
             im = img[b, :, z_start:z_end, y_start:y_end, x_start:x_end].unsqueeze(0)
             up3 = self.back3(torch.cat((up3, im), 1))
@@ -341,9 +342,11 @@ class NoduleNet(nn.Module):
         self.use_mask = False
 
         # self.rpn_loss = Loss(cfg['num_hard'])
-        
 
-    def forward(self, inputs, truth_boxes, truth_labels, truth_masks, masks, split_combiner=None, nzhw=None):
+    def save_gradient(self, grad):
+        self.gradient = grad
+
+    def forward(self, inputs, truth_boxes=None, truth_labels=None, truth_masks=None, masks=None, split_combiner=None, nzhw=None):
         features, feat_4 = data_parallel(self.feature_net, (inputs)); #print('fs[-1] ', fs[-1].shape)
         fs = features[-1]
 
@@ -422,6 +425,88 @@ class NoduleNet(nn.Module):
                     self.detections = self.detections[mask_keep]
                     self.mask_probs = self.mask_probs[mask_keep]
                 
+                self.mask_probs = crop_mask_regions(self.mask_probs, self.crop_boxes)
+
+    def forward_pred(self, inputs):
+        features, feat_4 = data_parallel(self.feature_net, (inputs)); #print('fs[-1] ', fs[-1].shape)
+        fs = features[-1]
+
+        self.rpn_logits_flat, self.rpn_deltas_flat = data_parallel(self.rpn, fs)
+
+        b,D,H,W,_,num_class = self.rpn_logits_flat.shape
+
+        self.rpn_logits_flat = self.rpn_logits_flat.view(b, -1, 1);#print('rpn_logit ', self.rpn_logits_flat.shape)
+        self.rpn_deltas_flat = self.rpn_deltas_flat.view(b, -1, 6);#print('rpn_delta ', self.rpn_deltas_flat.shape)
+
+
+        self.rpn_window    = make_rpn_windows(fs, self.cfg)
+        self.rpn_proposals = []
+        if self.use_rcnn or self.mode in ['eval', 'test']:
+            self.rpn_proposals = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
+                  self.rpn_logits_flat, self.rpn_deltas_flat)
+            # print 'length of rpn proposals', self.rpn_proposals.shape
+
+        # if self.mode in ['train', 'valid']:
+        #     # self.rpn_proposals = torch.zeros((0, 8)).cuda()
+        #     self.rpn_labels, self.rpn_label_assigns, self.rpn_label_weights, self.rpn_targets, self.rpn_target_weights = \
+        #         make_rpn_target(self.cfg, self.mode, inputs, self.rpn_window, truth_boxes, truth_labels )
+
+        #     if self.use_rcnn:
+        #         # self.rpn_proposals = torch.zeros((0, 8)).cuda()
+        #         self.rpn_proposals, self.rcnn_labels, self.rcnn_assigns, self.rcnn_targets = \
+        #             make_rcnn_target(self.cfg, self.mode, inputs, self.rpn_proposals,
+        #                 truth_boxes, truth_labels, truth_masks)
+
+        #rcnn proposals
+        self.detections = copy.deepcopy(self.rpn_proposals)
+        self.ensemble_proposals = copy.deepcopy(self.rpn_proposals)
+
+        self.mask_probs = []
+        if self.use_rcnn:
+            if len(self.rpn_proposals) > 0:
+                rcnn_crops = self.rcnn_crop(feat_4, inputs, self.rpn_proposals)
+                self.rcnn_logits, self.rcnn_deltas = data_parallel(self.rcnn_head, rcnn_crops)
+                self.detections, self.keeps = rcnn_nms(self.cfg, self.mode, inputs, self.rpn_proposals, 
+                                                                        self.rcnn_logits, self.rcnn_deltas)
+
+            if self.mode in ['eval']:
+                # Ensemble
+                fpr_res = get_probability(self.cfg, self.mode, inputs, self.rpn_proposals,  self.rcnn_logits, self.rcnn_deltas)
+                self.ensemble_proposals[:, 1] = (self.ensemble_proposals[:, 1] + fpr_res[:, 0]) / 2
+
+            if self.use_mask and len(self.detections):
+                # keep batch index, z, y, x, d, h, w, class
+                self.crop_boxes = []
+                if len(self.detections):
+                    self.crop_boxes = self.detections[:, [0, 2, 3, 4, 5, 6, 7, 8]].cpu().numpy().copy()
+                    self.crop_boxes[:, 1:-1] = center_box_to_coord_box(self.crop_boxes[:, 1:-1])
+                    self.crop_boxes = self.crop_boxes.astype(np.int32)
+                    self.crop_boxes[:, 1:-1] = ext2factor(self.crop_boxes[:, 1:-1], 4)
+                    self.crop_boxes[:, 1:-1] = clip_boxes(self.crop_boxes[:, 1:-1], inputs.shape[2:])
+                
+                # if self.mode in ['eval', 'test']:
+                #     self.crop_boxes = top1pred(self.crop_boxes)
+                # else:
+                #     self.crop_boxes = random1pred(self.crop_boxes)
+
+                # if self.mode in ['train', 'valid']:
+                #     self.mask_targets = make_mask_target(self.cfg, self.mode, inputs, self.crop_boxes,
+                #         truth_boxes, truth_labels, masks)
+
+                # Make sure to keep feature maps not splitted by data parallel
+                features = [t.unsqueeze(0).expand(torch.cuda.device_count(), -1, -1, -1, -1, -1) for t in features]
+                self.mask_probs = data_parallel(self.mask_head, (torch.from_numpy(self.crop_boxes).cuda(), features))
+
+                if self.mode in ['eval', 'test']:
+                    mask_keep = mask_nms(self.cfg, self.mode, self.mask_probs, self.crop_boxes, inputs)
+                #    self.crop_boxes = torch.index_select(self.crop_boxes, 0, mask_keep)
+                #    self.detections = torch.index_select(self.detections, 0, mask_keep)
+                #    self.mask_probs = torch.index_select(self.mask_probs, 0, mask_keep)
+                    self.crop_boxes = self.crop_boxes[mask_keep]
+                    self.detections = self.detections[mask_keep]
+                    self.mask_probs = self.mask_probs[mask_keep]
+                
+                self.features = features
                 self.mask_probs = crop_mask_regions(self.mask_probs, self.crop_boxes)
 
     def forward2(self, inputs, bboxes):

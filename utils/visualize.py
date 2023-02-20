@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib import patches
 import random
 import os
-import IPython.html.widgets as w
+import ipywidgets as w
 import cv2
 import matplotlib.animation as animation
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -14,6 +14,7 @@ from IPython.display import clear_output
 from matplotlib import colors
 from config import config
 import matplotlib.gridspec as gridspec
+from utils.get_classification import get_class
 
 
 # color for Nodule in the config['roi_names]
@@ -134,6 +135,20 @@ def show_image_and_mask(img):
         plt.show()
         
     w.interact(fz, k=w.IntSlider(min=0, max=img.shape[0] - 1, step=1, value=0))
+
+
+def show_cam(img, cam):
+    """
+    Given CT img, produce interactive jupyter notebook slider across axial slice
+    img: [D,H,W] or [D,H,W,3]
+    """
+
+    def fz(k):
+        plt.imshow(cam[k], vmin=img.min(), vmax=img.max() + 1, cmap='jet')
+        plt.imshow(img[k], vmin=img.min(), vmax=img.max() + 1, cmap='gray', alpha=0.4)
+        plt.show()
+        
+    w.interact(fz, k=w.IntSlider(min=0, max=img.shape[0] - 1, step=1, value=0))
     
 
 def draw_one_rect(img, box, color=(0, 0, 255), scale=3, text=''):
@@ -145,8 +160,10 @@ def draw_one_rect(img, box, color=(0, 0, 255), scale=3, text=''):
     scale: how big square box relative to the nodule, default 3
     """
     y0, x0, h, w = box
+    y0_cl, x0_cl, h_cl, w_cl = box
     H, W, _ = img.shape
 
+    # get original bounding box of detection
     h = h * scale
     w = w * scale
     x0 = max(0, x0 - w / 2)
@@ -156,14 +173,34 @@ def draw_one_rect(img, box, color=(0, 0, 255), scale=3, text=''):
     w = int(w)
     x0, x1, y0, y1 = int(x0), int(x1), int(y0), int(y1)
 
+    # get 224x224 bounding box values of nodule for classification
+    h_cl = 224
+    w_cl = 224
+    x0_cl = max(0, x0_cl - w_cl / 2)
+    y0_cl = max(0, y0_cl - h_cl / 2)
+    x1_cl, y1_cl = min(W - 1, x0_cl + w_cl), min(H - 1, y0_cl + h_cl)
+    h_cl = int(h_cl)
+    w_cl = int(w_cl)
+    x0_cl, x1_cl, y0_cl, y1_cl = int(x0_cl), int(x1_cl), int(y0_cl), int(y1_cl)
+
+    # draw bounding box
     cv2.rectangle(img, (x0, y0), (x1, y1), color, 0, lineType=4)
 
+    # get classification prediction
+    if (text != ''):
+      pred_class = get_class(img[x0_cl:x1_cl, y0_cl:y1_cl])
+    else:
+      pred_class = ''
+
+    # draw text
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.2
     thickness = 0
     size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+    text_top_left = (x0, y0 - 5)
     text_bottom_right = (x1, y1 + size[1])
     cv2.putText(img, text, text_bottom_right, font, font_scale, color, thickness, cv2.LINE_AA)
+    cv2.putText(img, pred_class, text_top_left, font, 0.3, color, thickness, cv2.LINE_AA)
     return img
 
 
@@ -205,6 +242,34 @@ def draw_bboxes(img, bboxes, color=(0, 128, 255), scale=2):
             p = box[0]
             text = '%.2f' % (p)
             img = draw_one_bbox(img, box[1:], list(colors(i))[:-1], scale, text)
+        else:
+            raise NotImplementedError
+
+    return img
+
+
+def draw_bboxes_and_masks(img, bboxes, mask, color=(0, 128, 255), scale=2):
+    """
+    Given CT scan in numpy, draw bounded boxes on each slice up within 2x nodule size.
+    img: [D,H,W] or [D,H,W,3]
+    bboxes: [num, 4] or [num, 5] with dimension 0 probability
+    color: RGB, default (0,128,255)
+    scale: how big square box relative to the nodule, default 2
+    """
+    assert img.ndim == 3 or img.ndim == 4
+    if img.ndim == 3:
+        img = np.repeat(img[:, :, :, np.newaxis], 3, axis=3)
+
+    num = int(len(bboxes))
+    colors = get_cmap(num)
+    for i, box in enumerate(bboxes):
+        if len(box) == 6:
+            img = draw_one_bbox(img, box, list(colors(i))[:-1], scale, '')
+        elif len(box) == 7:
+            p = box[0]
+            text = '%.2f' % (p)
+            if (p >= 0.8):
+              img = draw_one_bbox(img, box[1:], list(colors(i))[:-1], scale, text)
         else:
             raise NotImplementedError
 

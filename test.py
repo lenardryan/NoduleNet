@@ -23,7 +23,7 @@ from dataset.bbox_reader import BboxReader
 from dataset.mask_reader import MaskReader
 from config import config
 from utils.visualize import draw_gt, draw_pred, generate_image_anim
-from utils.util import dice_score_seperate, get_contours_from_masks, merge_contours, hausdorff_distance
+from utils.util import dice_score_seperate, get_contours_from_masks, merge_contours, hausdorff_distance, average_precision
 from utils.util import onehot2multi_mask, normalize, pad2factor, load_dicom_image, crop_boxes2mask_single, npy2submission
 import pandas as pd
 from evaluationScript.noduleCADEvaluationLUNA16 import noduleCADEvaluation
@@ -31,8 +31,9 @@ from evaluationScript.noduleCADEvaluationLUNA16 import noduleCADEvaluation
 plt.rcParams['figure.figsize'] = (24, 16)
 plt.switch_backend('agg')
 this_module = sys.modules[__name__]
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
 
+device = torch.device("cuda")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--net', '-m', metavar='NET', default=config['net'],
@@ -65,7 +66,7 @@ def main():
         out_dir = args.out_dir
 
         net = getattr(this_module, net)(config)
-        net = net.cuda()
+        net = net.to(device)
 
         if initial_checkpoint:
             print('[Loading model from %s]' % initial_checkpoint)
@@ -93,7 +94,7 @@ def main():
 
 def eval(net, dataset, save_dir=None):
     net.set_mode('eval')
-    net.use_mask = False
+    net.use_mask = True
     net.use_rcnn = True
     aps = []
     dices = []
